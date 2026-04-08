@@ -13,7 +13,7 @@ class AIRecommender:
             raise ValueError("Gemini API key not found. Set GEMINI_API_KEY environment variable.")
         
         # Using gemini-2.5-flash for better compatibility
-        self.model = "gemini-2.5-flash"  # Updated to a more recent model for better performance
+        self.model = "gemini-2.5-flash-lite"  # Updated to flash-lite for better performance and cost-efficiency
         self.base_url = f"https://generativelanguage.googleapis.com/v1/models/{self.model}:generateContent"
         self.cache = {}  # Simple in-memory cache
         self.cache_duration = 3600  # 1 hour cache duration
@@ -31,14 +31,14 @@ class AIRecommender:
         remaining = budget - total
         
         fallback_tips = {
-            "Happy": f"Great mood for spending! You have ₹{remaining} left - consider rewarding yourself with your favorite activity.",
-            "Sad": f"Cheer up! Spending ₹{total} on activities you enjoy can help lift your mood. Consider saving ₹{remaining} for a special treat.",
-            "Bored": f"Breaking the monotony! Your plan costs ₹{total}. Try mixing up the order of activities to maximize enjoyment.",
-            "Romantic": f"Perfect for a memorable experience! You're spending ₹{total} with ₹{remaining} flexibility. Make it special.",
-            "Stressed": f"Self-care matters! Your spending of ₹{total} is {status}. Don't forget to relax and enjoy the experience."
+            "Happy": f"**Budget Status**: {status}. **Recommendation**: You have ₹{remaining} remaining. Splurge on your happiest choice—maybe upgrade food or add a dessert. Happiness multiplier: spend on experiences over things.",
+            "Sad": f"**Budget Status**: {status}. **Recommendation**: Self-care spend of ₹{total} is wise. Consider a relaxing restaurant (comfort food) + lighter movie. Save ₹{remaining} for spontaneous mood-lifters.",
+            "Bored": f"**Budget Status**: {status}. **Recommendation**: Mix high-energy (movie/adventure place) with low-stress food. You have ₹{remaining}—consider adding a unique food experience to break monotony.",
+            "Romantic": f"**Budget Status**: {status}. **Recommendation**: Perfect romantic spend of ₹{total}. Go subtle on budget with ₹{remaining} left—use it for ambiance (candles, special seating) rather than quantity.",
+            "Stressed": f"**Budget Status**: {status}. **Recommendation**: Relaxation budget is wisely set at ₹{total}. Prioritize calm food + comfort movie. Keep ₹{remaining} as buffer—you deserve zero financial stress today."
         }
         
-        return fallback_tips.get(mood, f"Your spending is {status}. Budget used: ₹{total}/{budget}. {remaining} remaining.")
+        return fallback_tips.get(mood, f"**Budget**: {status}. Spent ₹{total}/{budget}. **Remaining**: ₹{remaining}. Allocate remaining for your mood priority to maximize satisfaction.")
     
     def _call_gemini_api(self, prompt: str, max_tokens: int = 500, temperature: float = 0.7, cache_key: str = None) -> Dict:
         """Make API call to Gemini with caching and fallback."""
@@ -91,16 +91,24 @@ class AIRecommender:
         # Use mood-based cache key
         cache_key = f"budget_{mood}_{budget}_{location}"
         
-        prompt = f"""Smart spending advisor for SpendMate app. Analyze and provide budget balancing advice.
+        budget_status = self._get_budget_status(total, budget)
+        remaining = budget - total
+        
+        prompt = f"""You are a budget optimization advisor. Analyze this {location} spending plan:
 
-User: Mood={mood}, Budget=₹{budget}, Location={location}
-Current: Food {food.get('name')} ₹{food.get('cost')}, Movie {movie.get('name')} ₹{movie.get('cost')}, Place {place.get('name')} ₹{place.get('cost')}
-Total: ₹{total} | Status: {self._get_budget_status(total, budget)}
+MOOD: {mood} | TOTAL BUDGET: ₹{budget} | SPENT: ₹{total} | REMAINING: ₹{remaining}
 
-Provide: (1) Within budget? (2) Budget allocation balance? (3) Mood-based suggestions (4) Alternatives (5) Spending health tips
-Keep concise and practical."""
+SELECTIONS: Food: {food.get('name', 'None')} (₹{food.get('cost', 0)}), Movie: {movie.get('name', 'None')} (₹{movie.get('cost', 0)}), Place: {place.get('name', 'None')} (₹{place.get('cost', 0)})
 
-        result = self._call_gemini_api(prompt, max_tokens=500, temperature=0.7, cache_key=cache_key)
+Respond in 3-4 concise points:
+1. **Budget Status**: Is this {budget_status}? Justify briefly.
+2. **Allocation**: Is the food-movie-place split wise for {mood} mood?
+3. **Optimization**: One specific change to maximize {mood} enjoyment within budget.
+4. **Quick Tip**: One actionable money-saving hack for {location}.
+
+Be descriptive but brief (no bullet lists, use bold for emphasis)."""
+
+        result = self._call_gemini_api(prompt, max_tokens=600, temperature=0.7, cache_key=cache_key)
         
         if result['success']:
             return {
@@ -110,7 +118,8 @@ Keep concise and practical."""
                 "budget": budget,
                 "budget_status": self._get_budget_status(total, budget),
                 "savings_potential": max(0, budget - total),
-                "budget_used_percentage": (total / budget * 100) if budget > 0 else 0
+                "budget_used_percentage": (total / budget * 100) if budget > 0 else 0,
+                "source": "gemini"
             }
         
         # Fallback when API fails
@@ -123,7 +132,7 @@ Keep concise and practical."""
             "budget_status": self._get_budget_status(total, budget),
             "savings_potential": max(0, budget - total),
             "budget_used_percentage": (total / budget * 100) if budget > 0 else 0,
-            "is_fallback": True
+            "source": "fallback"
         }
     
     def optimize_for_budget(
@@ -137,55 +146,89 @@ Keep concise and practical."""
         
         cache_key = f"optimize_{mood}_{budget}_{location}"
         
-        prompt = f"""Budget optimizer for {location}. Find best combination for mood "{mood}" and budget ₹{budget}.
+        prompt = f"""You are a smart budget optimizer for {location}. Find the BEST combo for {mood} mood within ₹{budget}.
 
-Available:
+MOOD: {mood} | BUDGET: ₹{budget} | LOCATION: {location}
+
+AVAILABLE OPTIONS:
 {options_text}
 
-Select 1 food, 1 movie, 1 place within ₹{budget}. Format: Food: name (₹X), Movie: name (₹X), Place: name (₹X), Total: ₹X, Why: brief reason"""
+SELECT: 1 food, 1 movie, 1 place that maximize {mood} experience while staying within budget.
 
-        result = self._call_gemini_api(prompt, max_tokens=400, temperature=0.7, cache_key=cache_key)
+RESPONSE FORMAT (concise):
+**Selected**: Food: [name] (₹X) | Movie: [name] (₹X) | Place: [name] (₹X)
+**Total**: ₹X | **Remaining**: ₹Y
+**Why This Combo**: 2-sentence description of why this matches {mood} mood + budget optimization.
+
+Focus: Maximize mood satisfaction + budget balance."""
+
+        result = self._call_gemini_api(prompt, max_tokens=500, temperature=0.7, cache_key=cache_key)
         
         if result['success']:
-            return {"success": True, "optimization": result['content']}
+            return {"success": True, "optimization": result['content'], "source": "gemini"}
         
         # Fallback - simple recommendation
         fallback = "Unable to optimize right now. Choose items that match your mood and stay within your budget. Mix high, medium, and low-cost options for variety."
-        return {"success": True, "optimization": fallback, "is_fallback": True}
+        return {"success": True, "optimization": fallback, "source": "fallback"}
     
     def _get_fallback_tips(self, mood: str, budget: int, spending: int) -> str:
         """Generate fallback money-saving tips when API is unavailable."""
         remaining = budget - spending
-        generic_tips = f"""
-1. **Smart Category Split**: Allocate 30% to food, 40% to entertainment, 30% to experiences.
-
-2. **Timing is Money**: Visit restaurants during off-peak hours for better deals. Matinee shows cost less than evening shows.
-
-3. **Group Discounts**: Invite friends! Many places offer group discounts or couple packages.
-
-4. **Review Before You Go**: Check ratings and reviews to avoid high-cost regrets. Spend ₹{remaining} wisely on quality over quantity.
-
-5. **Set Limits**: Decide on a per-category budget upfront. You have ₹{budget} total - stick to it!
-"""
-        return generic_tips
+        spend_ratio = (spending / budget * 100) if budget > 0 else 0
+        
+        mood_hacks = {
+            "Happy": f"""**1. Food Hack**: Double your happiness with food combos—budget pizza + premium dessert beats expensive mid-range meal.
+**2. Entertainment Hack**: Matinee shows + casual movie snacks = same joy, ₹{min(200, remaining//3)} saved.
+**3. Experience Hack**: Unique free zones (gardens, viewpoints) + paid highlights = memorable without overspending ₹{remaining}.""",
+            
+            "Sad": f"""**1. Food Hack**: Comfort means home-style cooking; splurge on one comfort dish rather than multiple expensive items.
+**2. Entertainment Hack**: Heartwarming movies cost same as sad ones—pick mood-lifters. Save ₹{min(150, remaining//4)} on premium tickets.
+**3. Experience Hack**: Visit peaceful spots (parks, cafes) instead of expensive tourist zones. Spend ₹{remaining} on relaxation quality.""",
+            
+            "Bored": f"""**1. Food Hack**: Try cuisines you've never had in budget sections—novel food beats expensive standard dining.
+**2. Entertainment Hack**: Multi-format entertainment (indie films + experimental shows) engages more, costs less. Save ₹{min(200, remaining//3)}.
+**3. Experience Hack**: Mix famous + hidden gems locally—saves money, adds adventure to ₹{remaining}.""",
+            
+            "Romantic": f"""**1. Food Hack**: Ambiance > price. Budget restaurant with candles + music beats expensive generic place.
+**2. Entertainment Hack**: Parallel movies/shows separately then discuss = romantic connection, save ₹{remaining//2} vs couples-only extras.
+**3. Experience Hack**: Walk-do-talk dates cost less, bond more. Reserve ₹{remaining} for one special paid memory.""",
+            
+            "Stressed": f"""**1. Food Hack**: Light, stress-free food (salads, calm cafes) prevent stress-eating regrets. Budget wisely on nutrition.
+**2. Entertainment Hack**: Choose calming content (nature docs, light comedies) not intense thrillers. Save ₹{min(150, remaining//3)}.
+**3. Experience Hack**: Spend ₹{remaining} on stress-relief zones (spas, gardens) not crowded tourist spots. Quality rest > quantity."""
+        }
+        
+        return mood_hacks.get(mood, f"""**Budget Efficiency**: You've used {spend_ratio:.0f}% of ₹{budget}.
+**1. Mix Categories**: Balance high + low-cost items across food/entertainment/places.
+**2. Timing Matters**: Off-peak hours for restaurants/entertainment reduce costs by ₹{min(300, remaining//2)}.
+**3. Maximize ₹{remaining}**: Use remaining for experience upgrades, not duplicates.""")
     
     def get_personalized_tips(self, mood: str, budget: int, current_spending: int, location: str) -> Dict:
         """Get personalized money-saving tips with fallback."""
         remaining = budget - current_spending
+        spend_ratio = (current_spending / budget * 100) if budget > 0 else 0
         cache_key = f"tips_{mood}_{budget}_{current_spending}"
         
-        prompt = f"""Finance advisor tips for {location}. User: Mood={mood}, Budget=₹{budget}, Spending=₹{current_spending}, Remaining=₹{remaining}
+        prompt = f"""Generate 3 specific money-saving hacks for a {mood} person in {location}.
 
-Provide 3-4 practical, mood-appropriate money-saving tips (1-2 sentences each). No budget exceeded."""
+CONTEXT: Budget ₹{budget} | Spent ₹{current_spending} ({spend_ratio:.0f}%) | Remaining ₹{remaining}
 
-        result = self._call_gemini_api(prompt, max_tokens=300, temperature=0.8, cache_key=cache_key)
+TIPS (be specific to {mood} mood + {location}, not generic):
+1. [Food hack]: How to optimize food spend for {mood} mood
+2. [Entertainment hack]: Smart way to save on movie/entertainment while keeping vibes right
+3. [Experience hack]: One way to maximize remaining ₹{remaining} for memorable experience
+
+Each tip: 1-2 sentences, specific, actionable. No generic advice."""
+
+        result = self._call_gemini_api(prompt, max_tokens=500, temperature=0.8, cache_key=cache_key)
         
         if result['success']:
             return {
                 "success": True,
                 "tips": result['content'],
                 "remaining_budget": remaining,
-                "efficiency_score": self._calculate_efficiency(current_spending, budget)
+                "efficiency_score": self._calculate_efficiency(current_spending, budget),
+                "source": "gemini"
             }
         
         # Fallback tips
@@ -194,7 +237,7 @@ Provide 3-4 practical, mood-appropriate money-saving tips (1-2 sentences each). 
             "tips": self._get_fallback_tips(mood, budget, current_spending),
             "remaining_budget": remaining,
             "efficiency_score": self._calculate_efficiency(current_spending, budget),
-            "is_fallback": True
+            "source": "fallback"
         }
     
     @staticmethod

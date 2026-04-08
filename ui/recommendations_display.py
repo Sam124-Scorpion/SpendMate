@@ -17,11 +17,11 @@ def render_recommendations(result, budget):
     st.divider()
     st.subheader("AI-Powered Recommendations")
 
-    # Show source badge
-    st.info("**ALL recommendations powered by Gemini API (No CSV data)**")
-
-    # Display AI Advice
+    # Display AI Advice with source indicator
     st.markdown("### Your Personalized Plan")
+    source = result.get('source', 'unknown')
+    source_badge = " **Gemini AI**" if source == "gemini" else " **Fallback Response**"
+    st.markdown(f"**Source:** {source_badge}")
     st.markdown(result.get('ai_advice', 'No advice available'))
 
     # Budget Analysis
@@ -36,11 +36,14 @@ def render_recommendations(result, budget):
     with col3:
         st.metric("Savings", f"₹{result.get('savings_potential', 0)}")
 
-    # Money-Saving Tips
+    # Money-Saving Tips with source indicator
     if result.get('efficiency_score', 0) > 0:
         st.divider()
         st.subheader("Money-Saving Tips")
+        tips_source = result.get('tips_source', 'unknown')
+        tips_badge = " **Gemini AI**" if tips_source == "gemini" else " **Fallback Response**"
         st.write(f"**Efficiency Score:** {result.get('efficiency_score', 0):.1f}/100")
+        st.markdown(f"**Source:** {tips_badge}")
         st.markdown(result.get('tips', 'No tips available'))
 
     # Show Location Services Header

@@ -63,7 +63,8 @@ def get_recommendations_from_api(mood, budget, location):
             "savings_potential": ai_result.get('savings_potential', 0),
             "efficiency_score": tips_result.get('efficiency_score', 0) if tips_result.get('success') else 0,
             "tips": tips_result.get('tips', '') if tips_result.get('success') else '',
-            "source": "api",
+            "source": ai_result.get('source', ''),
+            "tips_source": tips_result.get('source', '') if tips_result.get('success') else '',
             "status": "success"
         }
         
