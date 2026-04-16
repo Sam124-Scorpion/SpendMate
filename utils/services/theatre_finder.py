@@ -105,42 +105,75 @@ def get_location_coordinates(location_str):
 def get_nearby_theatres_from_osm(lat, lon, radius=15000):
     """
     Fetch nearby theatres using Overpass API (OpenStreetMap)
-    radius: search radius in meters (default 10km for wider coverage)
+    radius: search radius in meters (default 15km for wider coverage)
     Returns: list of theatre dicts with name, distance, lat, lon
-    Handles connection errors with retry logic
+    Advanced handling with exponential backoff for rate limiting & retries
     """
-    max_retries = 2
-    retry_delay = 1
+    max_retries = 5
+    initial_delay = 2
+    rate_limit_delay = 5
     
     for attempt in range(max_retries):
         try:
-            print(f"[theatre_finder] 📡 Querying OpenStreetMap for theatres near {lat:.4f}, {lon:.4f} within {radius}m (Attempt {attempt + 1}/{max_retries})")
+            # Calculate exponential backoff for rate limit errors
+            if attempt > 0:
+                backoff_delay = initial_delay * (2 ** (attempt - 1))
+                print(f"[theatre_finder] ⏳ Exponential backoff: waiting {backoff_delay}s before attempt {attempt + 1}...")
+                time.sleep(backoff_delay)
+            else:
+                # Pre-request delay to avoid immediate rate limits
+                print(f"[theatre_finder] ⏳ Pre-request delay: waiting {initial_delay}s to avoid rate limits...")
+                time.sleep(initial_delay)
+            
+            print(f"[theatre_finder] 📡 Advanced Overpass Query: {lat:.4f}, {lon:.4f} within {radius}m (Attempt {attempt + 1}/{max_retries})")
             
             overpass_url = "https://overpass-api.de/api/interpreter"
             
-            # Query for cinema amenities with multiple search terms
+            # Optimized query - reduced complexity to avoid timeouts
+            # Query only cinema amenity (single type) for better performance
             query = f"""
-            [out:json][timeout:15];
+            [out:json][timeout:20];
             (
                 node["amenity"="cinema"](around:{radius},{lat},{lon});
                 way["amenity"="cinema"](around:{radius},{lat},{lon});
                 relation["amenity"="cinema"](around:{radius},{lat},{lon});
-                node["amenity"="theatre"](around:{radius},{lat},{lon});
-                way["amenity"="theatre"](around:{radius},{lat},{lon});
-                relation["amenity"="theatre"](around:{radius},{lat},{lon});
             );
             out center;
             """
             
-            response = requests.post(overpass_url, data=query, timeout=15)
+            # Headers to identify your app properly
+            headers = {
+                "User-Agent": "SpendMate-TheatreFinder/1.0 (+https://github.com)",
+                "Content-Type": "application/x-www-form-urlencoded"
+            }
             
-            if response.status_code != 200:
-                print(f"[theatre_finder] ⚠️ Overpass API Error: {response.status_code}")
+            response = requests.post(
+                overpass_url, 
+                data=query, 
+                timeout=20, 
+                headers=headers
+            )
+            
+            # Handle rate limiting (429) with special logic
+            if response.status_code == 429:
+                print(f"[theatre_finder] ⚠️ Rate Limited (429): Overpass API throttling active")
                 if attempt < max_retries - 1:
-                    print(f"[theatre_finder] ⏳ Retrying in {retry_delay} seconds...")
-                    import time
-                    time.sleep(retry_delay)
+                    extra_wait = rate_limit_delay * (attempt + 1)
+                    print(f"[theatre_finder] ⏳ Rate-limit delay: waiting {extra_wait}s before retry...")
+                    time.sleep(extra_wait)
                     continue
+                else:
+                    print(f"[theatre_finder] ❌ Max retries exhausted for rate limiting")
+                    return None
+            
+            # Handle other HTTP errors
+            if response.status_code != 200:
+                print(f"[theatre_finder] ⚠️ Overpass API Error: HTTP {response.status_code}")
+                if response.status_code >= 500:  # Server error - retry
+                    if attempt < max_retries - 1:
+                        print(f"[theatre_finder] ⏳ Server error, retrying...")
+                        time.sleep(2)
+                        continue
                 return None
             
             data = response.json()
@@ -191,39 +224,37 @@ def get_nearby_theatres_from_osm(lat, lon, radius=15000):
             
             if theatres:
                 theatres = sorted(theatres, key=lambda x: x["distance"])
-                print(f"[theatre_finder] ✅ Total OSM theatres found: {len(theatres)}")
+                print(f"[theatre_finder] ✅ SUCCESS: Overpass API returned {len(theatres)} theatres")
                 return theatres
             else:
-                print(f"[theatre_finder] ⚠️ No theatres found in OpenStreetMap")
+                print(f"[theatre_finder] ⚠️ No theatres found in Overpass API")
                 return None
         
         except requests.exceptions.ConnectionError as e:
             print(f"[theatre_finder] ⚠️ Connection error with Overpass API: {str(e)}")
             if attempt < max_retries - 1:
-                print(f"[theatre_finder] ⏳ Retrying in {retry_delay} seconds...")
-                import time
-                time.sleep(retry_delay)
+                print(f"[theatre_finder] ⏳ Retrying after connection error...")
+                time.sleep(initial_delay * 2)
                 continue
             return None
         
         except requests.exceptions.Timeout:
             print(f"[theatre_finder] ⚠️ Overpass API timeout (Attempt {attempt + 1}/{max_retries})")
             if attempt < max_retries - 1:
-                print(f"[theatre_finder] ⏳ Retrying in {retry_delay} seconds...")
-                import time
-                time.sleep(retry_delay)
+                print(f"[theatre_finder] ⏳ Timeout - increasing wait time and retrying...")
+                time.sleep(3)
                 continue
             return None
         
         except Exception as e:
-            print(f"[theatre_finder] ❌ Overpass API error: {type(e).__name__} - {str(e)}")
+            print(f"[theatre_finder] ⚠️ Overpass API error: {type(e).__name__} - {str(e)}")
             if attempt < max_retries - 1:
-                print(f"[theatre_finder] ⏳ Retrying in {retry_delay} seconds...")
-                import time
-                time.sleep(retry_delay)
+                print(f"[theatre_finder] ⏳ Retrying...")
+                time.sleep(initial_delay)
                 continue
             return None
     
+    print(f"[theatre_finder] ❌ All Overpass API retry attempts failed")
     return None
 
 
